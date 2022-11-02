@@ -1,0 +1,94 @@
+name: build ecr push
+on: 
+  workflow_call:
+jobs: 
+  build_push_dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 
+      - name: Install dependencies
+        run: |
+          pip install awscli==1.11.76 
+      - name: Build Public Alice Non-Production DEV
+        run: |-
+          docker build  -t stateofca/dmv-dev-alice:commit-dev-${{ github.sha }} \
+          -t 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-dev-alice:commit-dev-${{ github.sha }} \
+          --build-arg APP_ENV=production --build-arg APP_MODE=public --build-arg  APP_TIMEOUT=600000 \
+          --build-arg APP_ABBYY_REDIRECT_URL=https://www.rad-dev.dmv.ca.gov/api/radv/v1/handshake/edl44 \
+          --build-arg APP_IDME_REDIRECT_URL=https://real.idmelabs.com/connections/incoming .
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Push all docker images to private registry
+        run: |-
+          docker push 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-dev-alice:commit-dev-${{ github.sha }}
+  
+  build_push_touch_screen_terminal:
+    runs-on: ubuntu-latest
+    environment: dev
+    needs: build_push_dev
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 
+      - name: Install dependencies
+        run: |
+          pip install awscli==1.11.76 
+      - name: Build Public Alice Non-Production touch screen terminal 
+        run: |-
+          docker build  -t stateofca/dmv-tst-alice:commit-${{ github.sha }} \
+          -t 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-tst-alice:commit-${{ github.sha }} \
+          --build-arg APP_ENV=production --build-arg APP_MODE=tst --build-arg  APP_TIMEOUT=180000 .
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Push all docker images to private registry
+        run: |-
+          docker push 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-tst-alice:commit-${{ github.sha }}
+
+  build_push_stg:
+    runs-on: ubuntu-latest
+    environment: stg
+    needs: build_push_touch_screen_terminal
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 
+      - name: Install dependencies
+        run: |
+          pip install awscli==1.11.76 
+      - name: Build Public Alice Non-Production STG
+        run: |-
+          docker build -t 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-stg-alice:latest-stg \
+          -t stateofca/dmv-stg-alice:latest-stg  -t stateofca/dmv-stg-alice:stg-${{ github.sha }} \
+          -t 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-stg-alice:stg-${{ github.sha }} \
+          --build-arg APP_ENV=production --build-arg APP_MODE=public --build-arg  APP_TIMEOUT=600000 --build-arg APP_ABBYY_REDIRECT_URL=https://www.rad-stg.dmv.ca.gov/api/radv/v1/handshake/edl44 --build-arg APP_IDME_REDIRECT_URL=https://real.idmelabs.com/connections/incoming --build-arg APP_ELEARNING_REDIRECT_URL=https://www.elearning-dev.dmv.ca.gov/ --build-arg APP_ELEARNING_ELIGIBILITY_URL=https://elearning.eligibility-dev.dmv.ca.gov --build-arg APP_PROCTORTRACK_REDIRECT_URL=https://dmv-st.verificient.com/ .
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Push all docker images to private registry
+        run: |-
+          docker push 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-stg-alice:latest-stg
+          docker push 013002847108.dkr.ecr.us-west-2.amazonaws.com/dmv-stg-alice:stg-${{ github.sha }}
+

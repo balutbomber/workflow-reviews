@@ -1,0 +1,122 @@
+name: run-test
+on:
+  workflow_dispatch:
+jobs:
+  run-test:
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      major: ${{ needs.semantic_versioning.outputs.tag }}
+    services:
+      postgres:
+        image: postgres:9.6.2-alpine
+        ports:
+          - 5432:5432
+        env:
+          TZ: "/usr/share/zoneinfo/America/Los_Angeles"
+          POSTGRES_DB: ci_test_db
+          POSTGRES_PASSWORD: "pa33word"
+          POSTGRES_USER: ci_tester
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: "print path info"
+        run: |
+          ls -a&&
+          pwd && 
+          docker ps
+      - name: installsudo
+        run: |
+          apt-get update && apt-get -y install sudo 
+          sudo apt-get install -y git
+      # - name: "uninstall node and npm"
+      #   run: |
+      #     sudo apt-get remove nodejs
+      #     sudo apt-get remove npm
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "10.16.3"
+      - name: Update conatiner repositories
+        run: sudo apt-get update
+      - name: check os version
+        run: sudo cat /etc/os-release
+      - name: Install latest Chromium package and missing dependencies
+        run: |-
+          sudo apt-get install -yq gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
+          libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 \
+          libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
+          libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+          ca-certificates fonts-liberation libnss3 lsb-release xdg-utils wget net-tools chromium-browser libappindicator3-1 \
+          libatk-bridge2.0-0 libgbm1
+      - name: restore_cache
+        uses: actions/cache@v2
+        with:
+          key: dependency-cache-{{ checksum "package.json" }}
+          path: "./node_modules"    
+      - name: Install node modules
+        run: |
+          npm install 
+          npm i dotenv
+      - name: Create .env file
+        uses: DeveloperRic/action-create-env@v1.0.2
+        with:
+          full_text: |
+            TZ=/usr/share/zoneinfo/America/Los_Angeles
+            APP_ENV=test
+            DATABASE_URL=postgresql://ci_tester:pa33word@localhost/ci_test_db
+            REDIS_URL=redis://localhost:6379
+            OAUTH2_CLIENT_ID=oauth2_client_id
+            OAUTH2_CLIENT_SECRET=oauth2_client_secret
+            PORT=3000
+            EXPRESS_SESSION_SECRET=aliceandpheobewenttoaparty
+      - name: "print path info"
+        run: |
+          ls -a &&
+          pwd 
+          echo printing env file
+          cat .env
+          cp .env ./server/config
+          netstat -anp | grep LISTEN
+          netstat -anp | grep 5432
+          netstat -anp | grep 6379
+          mkdir /tmp/repo
+          mkdir /tmp/docker_images
+          which chromium-browser
+      - name: Create default (public) client side (webpack) build
+        run: node_modules/webpack/bin/webpack.js --config webpack.config.dev.js
+      - name: Run database migrations
+        run: node_modules/knex/bin/cli.js migrate:latest
+      - name: Run tests
+        run: npm run test:coverage
+        continue-on-error: true
+      - name: Run Install codeclimate reporter module
+        run: sudo npm install -g codeclimate-test-reporter
+      - name: Send code coverage stats to code climate
+        run: codeclimate-test-reporter < coverage/lcov.info
+        continue-on-error: true
+      - name: Create TST client side (webpack) build
+        run: node_modules/webpack/bin/webpack.js --config webpack.config.dev.js  --env.APP_ENV=test --env.APP_MODE=tst --env.APP_TIMEOUT=180000
+        continue-on-error: true
+      - name: Run TST acceptance tests
+        run: npm run test:acceptance:tst
+        continue-on-error: true
+  ecr:
+    needs: run-test
+    uses: './.github/workflows/build-ecr-push.yml'
+    secrets: inherit
+
